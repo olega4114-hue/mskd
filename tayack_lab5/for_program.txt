@@ -1,0 +1,12 @@
+scan x;
+sum = 1;
+for i = x to 22 {
+print i;
+    for j = 1 to 5 {
+    print i;
+    print j;
+    }
+    sum = sum + i;
+}
+
+print sum;

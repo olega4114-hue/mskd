@@ -1,0 +1,16 @@
+for i = 1 to 4 {
+    if i == 2 {
+        print "Middle value";
+    } else {
+        print i;
+    }
+}
+
+
+scan x;
+if x * 10 > 99 {
+    print "Greater than 10";
+} else {
+    print "10 or less";
+}
+
