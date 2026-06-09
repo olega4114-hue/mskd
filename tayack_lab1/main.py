@@ -1,103 +1,133 @@
 import math
 
-priority = {'(': 1, '+': 2, '-':2, '*':3, '/': 3, '^':4, 'log':5}
-
-def expression(a, b, operation):
-    if operation == '+':
-        return a + b
-    elif operation == '-':
-        return a - b
-    elif operation == '*':
-        return a * b
-    elif operation == '/':
-        if b == 0:
-            return 'Некорректный ввод: на 0 делить нельзя'
-        return a / b
-    elif operation == '^':
-        return a ** b
-    elif operation == 'log':
-        return math.log(a, b)
-    else:
-        return 'Некорректный ввод: не поддерживаемый оператор'
-
-
-def calculate(input_string):
-    if input_string.count('(') != input_string.count(')'):
-        return 'Некорректный ввод: неверно расставлены скобки'
-    if '++' in input_string or '--' in input_string or '**' in input_string or '//' in input_string or '..' in input_string:
-        return 'Некорректный ввод:арифметические символы дублируют друг друга( ** или -- и т.д.)'
-    input_string = input_string.replace(' ', '')
-
-    stack = []
-    res = []
-    num = ''
-    input_len = len(input_string)
-    idx = 0
-    log_args = 1
-
-    while idx < input_len:
-        if input_string[idx].isdigit() or input_string[idx] == '.':
-            num += input_string[idx]
-            if idx == input_len - 1:
-                res.append(num)
-
+def tokenize(expr):
+    expr = expr.replace(' ', '')
+    if not expr:
+        raise ValueError('Пустое выражение')
+    
+    tokens = []
+    i = 0
+    while i < len(expr):
+        if expr[i].isdigit() or (expr[i] == '.' and i + 1 < len(expr) and expr[i + 1].isdigit()):
+            j = i
+            while j < len(expr) and (expr[j].isdigit() or expr[j] == '.'):
+                j += 1
+            tokens.append(('NUM', float(expr[i:j])))
+            i = j
+        elif expr[i:i+3] == 'log':
+            tokens.append(('LOG', 'log'))
+            i += 3
+        elif expr[i] in '+-*/':
+            tokens.append(('OP', expr[i]))
+            i += 1
+        elif expr[i] == '(':
+            tokens.append(('LP', '('))
+            i += 1
+        elif expr[i] == ')':
+            tokens.append(('RP', ')'))
+            i += 1
+        elif expr[i] == ',':
+            tokens.append(('COM', ','))
+            i += 1
         else:
-            if num!= '':
-                res.append(num)
-            num = ''
-            if input_string[idx] == 'l' and idx + 3 < input_len:
-                if input_string[idx:idx+3] == 'log':
-                    stack.append('log')
-                    log_args = 1
+            raise ValueError(f'Недопустимый символ: {expr[i]}')
+    
+    return tokens
 
-                    idx += 2
+def prec(op):
+    return {'+': 1, '-': 1, '*': 2, '/': 2}.get(op, 0)
+
+def to_rpn(tokens):
+    out = []
+    ops = []
+    
+    for t, v in tokens:
+        if t == 'NUM':
+            out.append(('NUM', v))
+        elif t == 'LOG':
+            ops.append(('LOG', 'log'))
+        elif t == 'OP':
+            while ops and ops[-1][0] != 'LP' and ops[-1][0] != 'LOG':
+                if prec(ops[-1][1]) >= prec(v):
+                    out.append(ops.pop())
                 else:
-                    return 'Некорректный ввод: озможно вы имели в виду log'
-            elif not stack or input_string[idx] == '(':
-                stack.append(input_string[idx])
+                    break
+            ops.append(('OP', v))
+        elif t == 'LP':
+            ops.append(('LP', '('))
+        elif t == 'RP':
+            while ops and ops[-1][0] != 'LP':
+                out.append(ops.pop())
+            if not ops:
+                raise ValueError('Несоответствие скобок')
+            ops.pop()
+            if ops and ops[-1][0] == 'LOG':
+                out.append(ops.pop())
+        elif t == 'COM':
+            while ops and ops[-1][0] != 'LP':
+                out.append(ops.pop())
+    
+    while ops:
+        o = ops.pop()
+        if o[0] == 'LP':
+            raise ValueError('Несоответствие скобок')
+        out.append(o)
+    
+    return out
 
-            elif input_string[idx] == ')':
-                while stack and stack[-1] != '(':
-                    res.append(stack.pop())
-                stack.pop()
+def eval_rpn(rpn):
+    stk = []
+    
+    for t, v in rpn:
+        if t == 'NUM':
+            stk.append(v)
+        elif t == 'OP':
+            if len(stk) < 2:
+                raise ValueError('Ошибка вычисления')
+            b = stk.pop()
+            a = stk.pop()
+            
+            if v == '+':
+                stk.append(a + b)
+            elif v == '-':
+                stk.append(a - b)
+            elif v == '*':
+                stk.append(a * b)
+            elif v == '/':
+                if b == 0:
+                    raise ValueError('Деление на ноль')
+                stk.append(a / b)
+        elif t == 'LOG':
+            if len(stk) < 2:
+                raise ValueError('Ошибка вычисления')
+            b = stk.pop()
+            a = stk.pop()
+            if a <= 0 or b <= 0 or b == 1:
+                raise ValueError('Неверный аргумент функции log')
+            stk.append(math.log(a, b))
+    
+    if len(stk) != 1:
+        raise ValueError('Ошибка вычисления')
+    
+    return stk[0]
 
-            elif input_string[idx] == ',' and stack[-2] == 'log':
-                log_args += 1
-                if log_args > 2:
-                    return 'Некорректный ввод: log имеет только 2 аргумента log(a,b)'
+def calc(expr):
+    tokens = tokenize(expr)
+    rpn = to_rpn(tokens)
+    return eval_rpn(rpn)
 
-            else:
-                while stack and priority[stack[-1]] >= priority[input_string[idx]]:
-                    res.append(stack.pop())
-                stack.append(input_string[idx])
-
-
-        idx += 1
-
-    rpn = res + stack [::-1]
-    print(rpn)
-    stack = []
-    for item in rpn:
-        if item.isdigit() or '.' in item:
-            stack.append(float(item))
-        elif item in {'+', '-', '*', '/', '^', 'log'}:
-            b = stack.pop()
-            a = stack.pop()
-            result = expression(a, b, item)
-            if type(result) == str:
-                return result
-            stack.append(result)
-
-    return stack.pop()
-
-
-
-#'12.50+(40-90)+.12*2'
-#'(10+11)*(12+13)-14'
-#'3+4*2/(1-5)^2'
-#'log(10, 2) + 3 * 5'
-
-print(calculate('12.50+(40-90)+.12*2'))
+if __name__ == '__main__':
+    while True:
+        try:
+            s = input('> ').strip()
+            if not s or s.lower() == 'exit':
+                break
+            r = calc(s)
+            print(f'Результат: {r}')
+        except ValueError as e:
+            print(f'Ошибка: {e}')
+        except Exception as e:
+            print(f'Ошибка: {e}')
 print(12.50+(40-90)+.12*2)
 
 

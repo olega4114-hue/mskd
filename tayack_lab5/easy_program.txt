@@ -1,9 +1,0 @@
-x = 10;
-b = 22;
-cd = 21;
-e = 15;
-print e;
-scan cd;
-print cd;
-print x;
-print b;

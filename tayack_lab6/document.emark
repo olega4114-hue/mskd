@@ -1,0 +1,18 @@
+<document rows="24" columns="80">
+  <row height="5">
+    <col width="40" halign="center" valign="center">
+      Hello world example using eMark
+    </col>
+    <col halign="left" valign="top">
+      Column 2
+    </col>
+  </row>
+  <row>
+    <col width="40" halign="center">
+      Footer
+    </col>
+    <col halign="center">
+      End
+    </col>
+  </row>
+</document>

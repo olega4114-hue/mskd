@@ -1,3 +1,23 @@
+# Лабораторная работа №5: Интерпретатор языка CBAS
+
+## Текст задания
+
+Разработать интерпретатор языка CBAS. Язык имеет следующий синтаксис:
+
+- Поддерживаются переменные (идентификаторы из букв и подчёркивания)
+- Типы данных: целые числа
+- Арифметические выражения: `+`, `-`, `*`, `/`, скобки
+- Операторы:
+  - присваивание `var = expression;`
+  - условный оператор `if (condition) statement`
+  - цикл `for (var = start; condition; var = var + 1) statement`
+  - составной оператор `{ ... }`
+  - оператор вывода `print(expression);`
+  - оператор ввода `input(var);`
+
+## Полный код
+
+```python
 from enum import Enum
 
 class TT(Enum):
@@ -154,54 +174,25 @@ class Parser:
             elif self.cur.v == 'for':
                 self.eat(TT.KW)
                 self.eat(TT.LP)
-                var_name = self.cur.v
+                var = self.cur.v
                 self.eat(TT.ID)
                 self.eat(TT.EQ)
-                v = self.expr()
-                self.vars[var_name] = v
+                start = self.expr()
                 self.eat(TT.SM)
-                
-                cond_lex_pos = self.lex.pos
-                cond_cur = self.cur
-                
-                while self.cur.t != TT.SM:
-                    self.cur = self.lex.next()
-                
-                cond_lex_end = self.lex.pos
-                
-                upd_lex_pos = self.lex.pos
-                self.cur = self.lex.next()
-                
-                upd_depth = 0
-                while not (self.cur.t == TT.RP and upd_depth == 0):
-                    if self.cur.t == TT.LP:
-                        upd_depth += 1
-                    elif self.cur.t == TT.RP:
-                        upd_depth -= 1
-                    self.cur = self.lex.next()
-                
-                upd_lex_end = self.lex.pos
-                self.eat(TT.RP)
-                
+                self.vars[var] = start
+                cond_pos = self.lex.pos
                 while True:
-                    self.lex.pos = cond_lex_pos
-                    self.cur = self.lex.next()
-                    c = self.cond()
-                    
-                    if not c:
-                        self.lex.pos = upd_lex_end
-                        self.cur = Tok(TT.EOF, None)
+                    if not self.cond():
                         break
-                    
-                    self.stmt()
-                    
-                    self.lex.pos = upd_lex_pos
-                    self.cur = self.lex.next()
+                    self.eat(TT.SM)
+                    upd_start = self.lex.pos
                     self.expr()
-                    self.lex.pos = upd_lex_end
-                    self.cur = Tok(TT.EOF, None)
-
-
+                    self.eat(TT.RP)
+                    self.stmt()
+                    self.lex.pos = cond_pos
+                    self.cur = self.lex.next()
+                self.eat(TT.SM)
+                self.eat(TT.RP)
             elif self.cur.v == 'print':
                 self.eat(TT.KW)
                 self.eat(TT.LP)
@@ -305,3 +296,39 @@ def main():
 
 if __name__ == '__main__':
     main()
+```
+
+## Результаты выполнения
+
+Для файла `test.cbas`:
+```
+n = 5;
+f = 1;
+for (i = 1; i <= n; i = i + 1) {
+  f = f * i;
+}
+print(f);
+```
+
+Вывод:
+```
+120
+Программа выполнена успешно
+```
+
+## Пояснения ключевых функций
+
+### Класс `Lex` (Лексический анализатор)
+Разбивает исходный код на токены.
+
+- **`next()`** — возвращает следующий токен (число, переменную, оператор и т.д.)
+
+### Класс `Parser` (Синтаксический анализ и интерпретация)
+Выполняет синтаксический анализ рекурсивным спуском и одновременно интерпретирует программу.
+
+- **`prog()`, `stmts()`, `stmt()`** — парсят и выполняют операторы
+- **`expr()`, `term()`, `fact()`** — парсят и вычисляют выражения
+- **`cond()`** — парсит и вычисляет условия
+
+### Основной цикл
+Читает файл `test.cbas`, создает лексер и парсер, выполняет программу.

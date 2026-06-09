@@ -1,6 +1,0 @@
-scan n;
-for i = 1 to n {
-    for j = 1 to i+1 {
-        print i, "*", j, "=", i * j;
-    }
-}

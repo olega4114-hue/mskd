@@ -1,153 +1,165 @@
-import re
+from collections import deque
 
-# Определение регулярных выражений для различных токенов
-TOKEN_SPEC = [
-    ('KEYWORD', r'\b(int|bool|void|for|if|return|main)\b'),
-    ('NUMBER', r'\b\d+\b'),
-    ('IDENTIFIER', r'\b[a-zA-Z_][a-zA-Z0-9_]*\b'),
-    ('OP', r'[{}();=<>&|!+\-*/]'),  # добавлены +, -, *, /
-    ('WS', r'\s+'),  # Пробельные символы (игнорируются)
-    ('MISMATCH', r'.'),  # Любой другой символ вызывает ошибку
-]
-
-TOKEN_REGEX = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in TOKEN_SPEC)
-token_re = re.compile(TOKEN_REGEX)
-
-def tokenize(code):
-    tokens = []
-    for match in token_re.finditer(code):
-        kind = match.lastgroup
-        value = match.group()
-        if kind == 'WS':
-            continue
-        elif kind == 'MISMATCH':
-            raise SyntaxError(f'Unexpected character {value}')
-        tokens.append((kind, value))
-    return tokens
-
-class Parser:
-    def __init__(self, tokens):
-        self.tokens = tokens
-        self.current_token = 0
-        self.errors = []
-
-    def parse(self):
-        self.program()
-        if not self.errors:
-            print("No syntax errors found.")
-        else:
-            print("Errors found:")
-            for error in self.errors:
-                print(error)
-
-    def program(self):
-        self.expect('KEYWORD', 'int')     # Проверка типа для main
-        self.expect('IDENTIFIER', 'main') # Проверка идентификатора main
-        self.expect('OP', '(')            # Проверка открывающей скобки (
-        self.expect('OP', ')')            # Проверка закрывающей скобки )
-        self.expect('OP', '{')            # Проверка открывающей фигурной скобки {
-        while self.get_token() and self.get_token()[1] != '}':
-            self.statement()               # Переход к оператору
-        self.expect('OP', '}')            # Проверка закрывающей фигурной скобки }
-
-    def expect(self, kind, value=None):
-        token = self.get_token()
-        if not token:
-            self.errors.append("Unexpected end of input")
-            return
-        if token[0] != kind or (value and token[1] != value):
-            self.errors.append(f"Expected {value or kind} at position {self.current_token}, found {token}")
-            self.panic()
-        else:
-            self.current_token += 1  # Переход к следующему токену только при успешном совпадении
-
-    def get_token(self):
-        if self.current_token < len(self.tokens):
-            return self.tokens[self.current_token]
-        return None
-
-    def panic(self):
-        # Пропуск токенов до подходящего
-        while self.get_token() and self.get_token()[1] not in (';', '}', 'for', 'if', 'return'):
-            self.current_token += 1
-
-    def statement(self):
-        token = self.get_token()
-        if token and token[1] == '{':
-            self.current_token += 1
-            while self.get_token() and self.get_token()[1] != '}':
-                self.statement()
-            self.expect('OP', '}')
-        elif token and token[1] == 'for':
-            self.for_statement()
-        elif token and token[1] == 'if':
-            self.if_statement()
-        elif token and token[1] == 'return':
-            self.return_statement()
-        elif token and token[0] == 'KEYWORD':
-            self.declaration()
-            self.expect('OP', ';')
-        else:
-            self.errors.append(f"Unexpected token {token} at position {self.current_token}")
-            self.panic()
-
-    def declaration(self):
-        self.expect('KEYWORD')  # <type>
-        self.expect('IDENTIFIER')  # <identifier>
-        if self.get_token() and self.get_token()[1] == '=':
-            self.current_token += 1
-            self.assign_end()
-
-    def assign_end(self):
-        token = self.get_token()
-        if token and token[0] in ('IDENTIFIER', 'NUMBER'):
-            self.current_token += 1
-        else:
-            self.errors.append(f"Expected identifier or number at position {self.current_token}")
-            self.panic()
-
-    def for_statement(self):
-        self.expect('KEYWORD', 'for')
-        self.expect('OP', '(')
-        self.declaration()
-        self.expect('OP', ';')
-        self.bool_expression()
-        self.expect('OP', ';')
-        self.assign_end()
-        self.expect('OP', ')')
-        self.statement()
-
-    def if_statement(self):
-        self.expect('KEYWORD', 'if')
-        self.expect('OP', '(')
-        self.bool_expression()
-        self.expect('OP', ')')
-        self.statement()
-
-    def return_statement(self):
-        self.expect('KEYWORD', 'return')
-        self.expect('NUMBER')
-        self.expect('OP', ';')
-
-    def bool_expression(self):
-        self.assign_end()
-        self.relop()
-        self.assign_end()
-
-    def relop(self):
-        token = self.get_token()
-        if token and token[1] in ('<', '>', '==', '!='):
-            self.current_token += 1
-        else:
-            self.errors.append(f"Expected relational operator at position {self.current_token}")
-            self.panic()
+class PDA:
+    def __init__(self, start_nt):
+        self.cmds = []
+        self.start = start_nt
+    
+    def add_cmd1(self, nt, body):
+        self.cmds.append(('1', nt, body))
+    
+    def add_cmd2(self, t):
+        self.cmds.append(('2', t))
+    
+    def add_cmd3(self):
+        self.cmds.append(('3',))
+    
+    def parse_grammar(self, fn):
+        try:
+            with open(fn, 'r') as f:
+                content = f.read()
+        except FileNotFoundError:
+            raise ValueError(f'Файл {fn} не найден')
+        
+        rules = {}
+        first_nt = None
+        
+        for line in content.strip().split('\n'):
+            if not line.strip():
+                continue
+            
+            if '>' not in line:
+                raise ValueError(f'Неверный формат правила: {line}')
+            
+            idx = 0
+            while idx < len(line) and line[idx].isupper():
+                idx += 1
+            
+            if idx == 0 or '>' not in line[idx:]:
+                raise ValueError(f'Неверный формат правила: {line}')
+            
+            lhs = line[:idx].strip()
+            rest = line[idx:].strip()
+            
+            if not rest.startswith('>'):
+                raise ValueError(f'Неверный формат правила: {line}')
+            
+            rhs_str = rest[1:].strip()
+            rhs = rhs_str.split('|')
+            
+            if lhs not in rules:
+                rules[lhs] = []
+            
+            if first_nt is None:
+                first_nt = lhs
+                self.start = lhs
+            
+            for alt in rhs:
+                alt = alt.strip().replace(' ', '')
+                if not alt:
+                    raise ValueError(f'Пустая альтернатива для {lhs}')
+                rules[lhs].append(alt)
+        
+        for nt in rules:
+            for body in rules[nt]:
+                self.add_cmd1(nt, body)
+        
+        terms = set()
+        for nt in rules:
+            for body in rules[nt]:
+                for ch in body:
+                    if not ch.isupper():
+                        terms.add(ch)
+        
+        for t in terms:
+            self.add_cmd2(t)
+        
+        self.add_cmd3()
+        
+        return rules, first_nt
+    
+    def parse_string(self, w):
+        visited = set()
+        
+        def dfs(w_idx, stk_str, depth):
+            if depth > 1000:
+                return False
+            
+            key = (w_idx, stk_str)
+            if key in visited:
+                return False
+            visited.add(key)
+            
+            if w_idx == len(w) and stk_str == 'h0':
+                return True
+            
+            if w_idx > len(w) or len(stk_str) > 100:
+                return False
+            
+            for cmd in self.cmds:
+                if cmd[0] == '1':
+                    nt, body = cmd[1], cmd[2]
+                    if stk_str and stk_str[0] == nt:
+                        new_stk = body + stk_str[1:]
+                        if dfs(w_idx, new_stk, depth + 1):
+                            return True
+                
+                elif cmd[0] == '2':
+                    t = cmd[1]
+                    if w_idx < len(w) and w[w_idx] == t and stk_str and stk_str[0] == t:
+                        new_stk = stk_str[1:]
+                        if dfs(w_idx + 1, new_stk, depth + 1):
+                            return True
+                
+                elif cmd[0] == '3':
+                    if w_idx == len(w) and stk_str == 'h0':
+                        return True
+            
+            return False
+        
+        init_stk = self.start + 'h0'
+        result = dfs(0, init_stk, 0)
+        return result
 
 def main():
-    with open("2.txt", "r") as f:  # Обработка файла 1.txt
-        code = f.read()
-    tokens = tokenize(code)
-    parser = Parser(tokens)
-    parser.parse()
+    try:
+        pda = PDA('')
+        rules, start = pda.parse_grammar('grammar.txt')
+        
+        print('=== Грамматика ===')
+        for nt in rules:
+            print(f'{nt} > {" | ".join(rules[nt])}')
+        
+        print('\n=== Команды магазинного автомата ===')
+        print('\nТип 1 (нетерминалы):')
+        for cmd in pda.cmds:
+            if cmd[0] == '1':
+                print(f'  (s0, ε, {cmd[1]}) → (s0, {list(reversed(cmd[2]))})')
+        
+        print('\nТип 2 (терминалы):')
+        for cmd in pda.cmds:
+            if cmd[0] == '2':
+                print(f'  (s0, {cmd[1]}, {cmd[1]}) → (s0, ε)')
+        
+        print('\nТип 3 (завершение):')
+        for cmd in pda.cmds:
+            if cmd[0] == '3':
+                print(f'  (s0, ε, h0) → (s0, ε)')
+        
+        print('\n=== Тестирование ===')
+        while True:
+            w = input('Введите строку: ').strip()
+            if not w or w.lower() == 'exit':
+                break
+            
+            ok = pda.parse_string(w)
+            if ok:
+                print(f'Строка "{w}" допускается')
+            else:
+                print(f'Строка "{w}" не допускается')
+    
+    except Exception as e:
+        print(f'Ошибка: {e}')
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

@@ -1,126 +1,164 @@
-import re
-from collections import defaultdict
+import sys
+from collections import defaultdict, deque
 
-
-class State:
-    def __init__(self, name, is_final=False):
-        self.name = name
-        self.is_final = is_final
-        self.transitions = defaultdict(list)  # Словарь переходов: символ -> список состояний
-
-    def add_transition(self, symbol, state):
-        self.transitions[symbol].append(state)
-
-    def __repr__(self):
-        return f"State({self.name}, final={self.is_final}, transitions={dict(self.transitions)})"
-
-
-class FiniteAutomaton:
+class FA:
     def __init__(self):
-        self.states = {}  # Словарь состояний: имя -> состояние
-        self.start_state = None
-
-    def add_transition(self, from_state, symbol, to_state):
-        if from_state not in self.states:
-            self.states[from_state] = State(from_state)
-        if to_state not in self.states:
-            is_final = to_state.startswith('f')
-            self.states[to_state] = State(to_state, is_final)
-
-        self.states[from_state].add_transition(symbol, self.states[to_state])
-
-    def is_deterministic(self):
-        """Проверяет детерминированность автомата"""
-        for state in self.states.values():
-            for symbol, transitions in state.transitions.items():
-                if len(transitions) > 1:
-                    return False
-        return True
-
-    def determinize(self):
-        """Детерминирует недетерминированный автомат"""
-        new_transitions = {}
-        new_states = {}
-        state_queue = [frozenset([self.start_state])]  # Начинаем с множества, содержащего стартовое состояние
-        new_start_state_name = ','.join(sorted([self.start_state.name]))
-
-        while state_queue:
-            current_set = state_queue.pop(0)
-            current_name = ','.join(sorted([state.name for state in current_set]))
-
-            if current_name not in new_states:
-                new_states[current_name] = State(current_name)
-
-            for symbol in {sym for state in current_set for sym in state.transitions.keys()}:
-                next_states = frozenset(
-                    [next_state for state in current_set for next_state in state.transitions[symbol]])
-                next_state_name = ','.join(sorted([s.name for s in next_states]))
-
-                if next_state_name not in new_states:
-                    new_states[next_state_name] = State(next_state_name, any(s.is_final for s in next_states))
-                    state_queue.append(next_states)
-
-                new_states[current_name].add_transition(symbol, new_states[next_state_name])
-
-        self.states = new_states
-        self.start_state = new_states[new_start_state_name]
-
-    def analyze_string(self, input_string):
-        current_state = self.start_state
-        for symbol in input_string:
-            if symbol in current_state.transitions:
-                current_state = current_state.transitions[symbol][0]
-            else:
+        self.trans = defaultdict(list)
+        self.final = set()
+        self.all_states = set()
+        self.alphabet = set()
+    
+    def add_trans(self, src, sym, dst):
+        self.trans[(src, sym)].append(dst)
+        self.all_states.add(src)
+        self.all_states.add(dst)
+        self.alphabet.add(sym)
+    
+    def is_determ(self):
+        for key in self.trans:
+            if len(self.trans[key]) > 1:
                 return False
-        return current_state.is_final
+        return True
+    
+    def get_unreachable(self):
+        vis = {q: False for q in self.all_states}
+        q = deque(['q0'])
+        vis['q0'] = True
+        
+        while q:
+            s = q.popleft()
+            for (src, sym), dsts in self.trans.items():
+                if src == s:
+                    for d in dsts:
+                        if not vis[d]:
+                            vis[d] = True
+                            q.append(d)
+        
+        unreach = {s for s in self.all_states if not vis[s]}
+        return unreach
+    
+    def to_dfa(self):
+        if self.is_determ():
+            return self
+        
+        dfa = FA()
+        q_map = {}
+        q0_set = frozenset(['q0'])
+        q_map[q0_set] = 'q0'
+        
+        work = deque([q0_set])
+        proc = {q0_set}
+        
+        while work:
+            cur_set = work.popleft()
+            cur_name = q_map[cur_set]
+            
+            is_final = any(s in self.final for s in cur_set)
+            if is_final:
+                dfa.final.add(cur_name)
+            
+            dfa.all_states.add(cur_name)
+            
+            for sym in self.alphabet:
+                nxt_set = frozenset(d for src in cur_set if (src, sym) in self.trans for d in self.trans[(src, sym)])
+                
+                if nxt_set and nxt_set not in proc:
+                    q_map[nxt_set] = 'q' + '_'.join(sorted(nxt_set)[1:]) if len(nxt_set) > 1 else list(nxt_set)[0]
+                    work.append(nxt_set)
+                    proc.add(nxt_set)
+                
+                if nxt_set:
+                    dfa.add_trans(cur_name, sym, q_map[nxt_set])
+        
+        return dfa
+    
+    def accepts(self, w):
+        cur = 'q0'
+        for ch in w:
+            if (cur, ch) not in self.trans:
+                return False, len(w)
+            nxt = self.trans[(cur, ch)]
+            if not nxt:
+                return False, len(w)
+            cur = nxt[0]
+        
+        return cur in self.final, -1
 
-    def print_transitions(self):
-        for state_name, state in self.states.items():
-            for symbol, next_states in state.transitions.items():
-                for next_state in next_states:
-                    print(f"{state_name},{symbol}={next_state.name}")
+def parse_file(fn):
+    fa = FA()
+    try:
+        with open(fn, 'r') as f:
+            for l in f:
+                l = l.strip()
+                if not l or l.startswith(';'):
+                    continue
+                try:
+                    if '=' not in l or ',' not in l:
+                        raise ValueError(f'Неверный формат: {l}')
+                    
+                    comma_idx = l.index(',')
+                    eq_idx = l.rindex('=')
+                    
+                    src = l[:comma_idx].strip()
+                    sym = l[comma_idx+1:eq_idx].strip()
+                    if not sym:
+                        sym = l[comma_idx+1:eq_idx]
+                    dst = l[eq_idx+1:].strip()
+                    
+                    if not (src.startswith('q') or src.startswith('f')):
+                        raise ValueError(f'Неверное имя состояния: {src}')
+                    if not (dst.startswith('q') or dst.startswith('f')):
+                        raise ValueError(f'Неверное имя состояния: {dst}')
+                    
+                    if dst.startswith('f'):
+                        fa.final.add(dst)
+                    
+                    fa.add_trans(src, sym, dst)
+                
+                except ValueError as e:
+                    raise ValueError(f'Ошибка в строке: {l} - {e}')
+    
+    except FileNotFoundError:
+        raise ValueError(f'Файл {fn} не найден')
+    
+    return fa
 
-
-def parse_automaton(file_path):
-    automaton = FiniteAutomaton()
-    with open(file_path, 'r') as file:
-        for line in file:
-            line = line.strip()
-            match = re.match(r'(q|f)(\d+),(\w)=(q|f)(\d+)', line)
-            if match:
-                from_state_type, from_state_num, symbol, to_state_type, to_state_num = match.groups()
-                from_state = f"{from_state_type}{from_state_num}"
-                to_state = f"{to_state_type}{to_state_num}"
-                automaton.add_transition(from_state, symbol, to_state)
-
-    automaton.start_state = automaton.states['q0']
-    return automaton
-
-
-# Пример использования
-file_path = 'nondet_automaton2.txt'
-# input_string = "ab"
-input_string = 'abbbbbbbbbbbbbbbbm'
-
-# Чтение автомата
-automaton = parse_automaton(file_path)
-
-# Проверка детерминированности
-if automaton.is_deterministic():
-    print("Автомат детерминирован.")
-else:
-    print("Автомат недетерминирован.")
-    print("Таблица переходов недетерминированного автомата:")
-    automaton.print_transitions()
-    print("Детерминирование автомата...")
-    automaton.determinize()
-
-# Проверка строки
-result = automaton.analyze_string(input_string)
-if result:
-    print(f"Строка '{input_string}' допускается автоматом.")
-else:
-    print(f"Строка '{input_string}' не допускается автоматом.")
-
-print("Таблица переходов автомата после детерминирования:")
-automaton.print_transitions()
+if __name__ == '__main__':
+    try:
+        fa = parse_file('states.txt')
+        
+        print('=== Исходный автомат ===')
+        print('Переходы:')
+        for (src, sym), dsts in sorted(fa.trans.items()):
+            for dst in dsts:
+                print(f'  {src},{sym}={dst}')
+        
+        print(f'\nДетерминирован: {fa.is_determ()}')
+        
+        unreach = fa.get_unreachable()
+        if unreach:
+            print(f'Висячие состояния: {unreach}')
+        
+        if not fa.is_determ():
+            print('\n=== Детерминизация ===')
+            dfa = fa.to_dfa()
+            print('Переходы ДКА:')
+            for (src, sym), dsts in sorted(dfa.trans.items()):
+                for dst in dsts:
+                    print(f'  {src},{sym}={dst}')
+            fa = dfa
+        
+        print('\n=== Тестирование ===')
+        while True:
+            w = input('Введите строку: ').strip()
+            if not w or w.lower() == 'exit':
+                break
+            
+            ok, pos = fa.accepts(w)
+            if ok:
+                print(f'Строка "{w}" допускается')
+            else:
+                print(f'Строка "{w}" не допускается')
+    
+    except Exception as e:
+        print(f'Ошибка: {e}')
